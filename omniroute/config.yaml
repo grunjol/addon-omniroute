@@ -1,5 +1,5 @@
 name: "OmniRoute"
-version: "3.8.48-1"
+version: "3.8.48-2"
 slug: "omniroute"
 description: "Unified AI proxy. Route any LLM through one endpoint — 250+ providers, 90+ free."
 url: "https://github.com/diegosouzapw/OmniRoute"
@@ -8,8 +8,6 @@ arch:
   - amd64
 init: false
 startup: services
-ingress: true
-ingress_port: 20128
 map:
   - type: addon_config
     read_only: false
