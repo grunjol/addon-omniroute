@@ -1,0 +1,53 @@
+#include <tunables/global>
+
+profile omniroute flags=(attach_disconnected,mediate_deleted) {
+  #include <abstractions/base>
+
+  # Capabilities
+  file,
+  signal (send) set=(kill,term,int,hup,cont),
+
+  # Access to app data
+  /app/data/** rw,
+  /app/** r,
+
+  # Node.js runtime
+  /usr/local/bin/node ix,
+  /usr/local/lib/** r,
+
+  # Bash
+  /bin/bash rix,
+  /bin/sh rix,
+  /bin/echo ix,
+  /bin/cat ix,
+  /bin/rm ix,
+  /bin/ln ix,
+  /bin/mv ix,
+  /bin/mkdir ix,
+  /bin/chown ix,
+  /bin/chmod ix,
+  /bin/cp ix,
+  /bin/df ix,
+  /bin/ls ix,
+  /bin/grep ix,
+  /bin/sed ix,
+
+  # System
+  /etc/passwd r,
+  /etc/hosts r,
+  /etc/resolv.conf r,
+  /etc/nsswitch.conf r,
+  /etc/host.conf r,
+  /dev/tty rw,
+  /dev/urandom r,
+  /proc/* r,
+  /proc/self/** r,
+  /sys/fs/cgroup/** r,
+  /tmp/** rw,
+
+  # Network
+  network inet stream,
+  network inet dgram,
+  network inet6 stream,
+  network inet6 dgram,
+}
