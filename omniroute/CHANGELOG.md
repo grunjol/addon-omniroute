@@ -1,5 +1,9 @@
 # Changelog
 
+## 3.8.49-1
+
+- Applied PR #9353: fix reset-window strategy prioritization
+
 ## 3.8.48-2
 
 - Removed ingress and nginx reverse proxy (interferes with SSE/WebSocket)
