@@ -1,6 +1,6 @@
 # Changelog
 
-## 3.8.49-1
+## 3.8.49.1
 
 - Applied PR #9353: fix reset-window strategy prioritization
 
