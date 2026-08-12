@@ -113,12 +113,12 @@ ENV OMNIROUTE_MIGRATIONS_DIR=/app/migrations
 # Docker healthcheck script (not traced by Next.js standalone output).
 COPY --from=builder /app/scripts/dev/healthcheck.mjs ./healthcheck.mjs
 
-# Hand /app over to the baked-in `node` non-root user (UID/GID 1000).
-RUN chown -R node:node /app
-
+# Home Assistant mounts addon_config as root-owned, so the addon runs as root
+# (the upstream image runs as `node`, which cannot write to the HA-mounted data
+# dir). Dropping the chown also avoids the ~130MB duplicate layer it created.
 EXPOSE 20128
 
-USER node
+USER root
 
 # Warns if the mounted data volume has wrong ownership.
 COPY --from=source --chmod=755 /src/scripts/check-permissions.sh /tmp/check-permissions.sh

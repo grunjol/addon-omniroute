@@ -1,5 +1,10 @@
 # Changelog
 
+## 3.8.49.3
+
+- Run as root (fix `/app/data` permission error with HA addon_config mount)
+- Smaller image: dropped the duplicate chown layer
+
 ## 3.8.49.2
 
 - Multi-stage build: patches now applied to source BEFORE compile (they take real effect)
