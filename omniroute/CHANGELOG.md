@@ -1,5 +1,10 @@
 # Changelog
 
+## 3.8.49.2
+
+- Multi-stage build: patches now applied to source BEFORE compile (they take real effect)
+- PR #9353 (reset-window fix) now actually included in the compiled bundle
+
 ## 3.8.49.1
 
 - Applied PR #9353: fix reset-window strategy prioritization
