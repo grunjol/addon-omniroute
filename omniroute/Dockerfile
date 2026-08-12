@@ -60,8 +60,12 @@ RUN --mount=type=cache,id=npm-cache,target=/root/.npm \
   && (test -n "$(find node_modules/tls-client-node/bin -mindepth 1 -print -quit 2>/dev/null)" \
       || (echo "tls-client-node native binary missing after postinstall" >&2 && exit 1))
 
-# Build with Turbopack (stable in Next 16, the repo default).
-ENV OMNIROUTE_USE_TURBOPACK=1
+# Turbopack's native (Rust) memory is NOT bounded by --max-old-space-size, and
+# the 16GB GitHub CI runners OOM during `npm run build` with it enabled. Use the
+# webpack fallback (bounded by the V8 heap) for memory-constrained CI runners.
+# Override with --build-arg OMNIROUTE_USE_TURBOPACK=1 on a large-memory machine.
+ARG OMNIROUTE_USE_TURBOPACK=0
+ENV OMNIROUTE_USE_TURBOPACK=$OMNIROUTE_USE_TURBOPACK
 
 # Next.js basePath is fixed at build time.
 ARG OMNIROUTE_BASE_PATH=""
@@ -70,8 +74,9 @@ ENV OMNIROUTE_BASE_PATH=$OMNIROUTE_BASE_PATH
 # Docker containers cannot run the MITM/Agent-Bridge stack; keep the graceful stub.
 ENV OMNIROUTE_MITM_STUB=1
 
-# Raise the V8 heap ceiling for the build (prerender/export phase).
-ARG OMNIROUTE_BUILD_MEMORY_MB=4096
+# Raise the V8 heap ceiling for the build. The webpack production pass peaks
+# ~3.9 GB (brushes a 4 GB ceiling), so give it 8 GB of headroom.
+ARG OMNIROUTE_BUILD_MEMORY_MB=8192
 ENV NODE_OPTIONS="--max-old-space-size=${OMNIROUTE_BUILD_MEMORY_MB}"
 
 COPY --from=source /src ./
