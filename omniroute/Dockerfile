@@ -8,12 +8,12 @@ RUN apk add --no-cache patch
 ARG OMNROUTE_VERSION=v3.8.49
 RUN git clone --depth 1 --branch ${OMNROUTE_VERSION} \
     https://github.com/diegosouzapw/OmniRoute.git /src
-# Add future patches here (each is applied with `patch -p1` from /src).
-# Applied alphabetically: opencode-quota-cache → pr-9353 → reset-aware-monthly
-# (reset-aware-monthly must apply AFTER pr-9353, whose line offsets it targets).
-COPY opencode-quota-cache.patch /patches/opencode-quota-cache.patch
-COPY pr-9353.patch /patches/pr-9353.patch
-COPY reset-aware-monthly.patch /patches/reset-aware-monthly.patch
+# Add future patches here. Numeric prefixes fix the application order (the
+# `for` loop globs /patches/*.patch alphabetically). Keep reset-aware-monthly
+# AFTER pr-9353, whose line offsets it targets.
+COPY 01-opencode-quota-cache.patch /patches/01-opencode-quota-cache.patch
+COPY 02-pr-9353.patch /patches/02-pr-9353.patch
+COPY 03-reset-aware-monthly.patch /patches/03-reset-aware-monthly.patch
 RUN cd /src && for p in /patches/*.patch; do patch -p1 < "$p"; done
 
 # ── Stage 2: base (replica of the official Dockerfile's `base` stage) ──────
