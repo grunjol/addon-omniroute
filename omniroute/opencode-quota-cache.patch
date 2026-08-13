@@ -1,0 +1,109 @@
+diff --git a/open-sse/services/opencodeQuotaFetcher.ts b/open-sse/services/opencodeQuotaFetcher.ts
+index 79d38b8..30645c8 100644
+--- a/open-sse/services/opencodeQuotaFetcher.ts
++++ b/open-sse/services/opencodeQuotaFetcher.ts
+@@ -225,6 +225,77 @@ function parseOpencodeQuotaResponse(data: unknown): OpencodeTripleWindowQuota |
+   };
+ }
+ 
++// ─── Domain cache mapping ────────────────────────────────────────────────────
++
++/**
++ * Read the domain quota cache for a connection and map it to the triple-window
++ * shape. Returns null when there is no cached data (background ticker hasn't
++ * run yet, no cookies configured, or the connection is unknown).
++ */
++async function tryDomainQuotaCache(
++  connectionId: string
++): Promise<OpencodeTripleWindowQuota | null> {
++  try {
++    // Lazy dynamic import (matches sessionStickiness.ts / quotaStrategies.ts):
++    // breaks the opencodeQuotaFetcher → domain/quotaCache → usage → usage/opencode
++    // static cycle, and keeps the domain read off the module-init path.
++    const { getQuotaCache } = await import("../../src/domain/quotaCache");
++    const entry = getQuotaCache(connectionId);
++    if (!entry?.quotas || Object.keys(entry.quotas).length === 0) return null;
++    return buildTripleWindowFromDomainQuotas(entry.quotas);
++  } catch {
++    return null; // fail open — never block routing on a cache read
++  }
++}
++
++/**
++ * Map the domain quota cache (populated by the 60s background ticker via
++ * getUsageForProvider → dashboard cookie scraper) into the triple-window shape
++ * the combo scoring consumes. Window keys on the domain cache follow the
++ * scraper's naming: "session" / "weekly" / "mcp_monthly".
++ */
++function buildTripleWindowFromDomainQuotas(
++  quotas: Record<string, { remainingPercentage?: number | null; resetAt?: string | null }>
++): OpencodeTripleWindowQuota | null {
++  const toWindow = (
++    key: string
++  ): { percentUsed: number; resetAt: string | null } | null => {
++    const entry = quotas[key];
++    if (!entry || typeof entry.remainingPercentage !== "number") return null;
++    const remaining = Math.max(0, Math.min(100, entry.remainingPercentage));
++    return {
++      percentUsed: (100 - remaining) / 100,
++      resetAt: entry.resetAt || null,
++    };
++  };
++
++  const window5h = toWindow("session");
++  const windowWeekly = toWindow("weekly");
++  const windowMonthly = toWindow("mcp_monthly");
++  const present = [window5h, windowWeekly, windowMonthly].filter(
++    (w): w is { percentUsed: number; resetAt: string | null } => w !== null
++  );
++  if (present.length === 0) return null;
++
++  const percentUsed = Math.max(...present.map((w) => w.percentUsed));
++  const windows: Record<string, { percentUsed: number; resetAt: string | null }> = {};
++  if (window5h) windows[OPENCODE_WINDOW_5H] = window5h;
++  if (windowWeekly) windows[OPENCODE_WINDOW_WEEKLY] = windowWeekly;
++  if (windowMonthly) windows[OPENCODE_WINDOW_MONTHLY] = windowMonthly;
++
++  return {
++    used: Math.round(percentUsed * 100),
++    total: 100,
++    percentUsed,
++    resetAt: present[0].resetAt,
++    windows,
++    window5h: window5h ?? { percentUsed: 0, resetAt: null },
++    windowWeekly: windowWeekly ?? { percentUsed: 0, resetAt: null },
++    windowMonthly: windowMonthly ?? { percentUsed: 0, resetAt: null },
++    limitReached: percentUsed >= 1 - 1e-9,
++  };
++}
++
+ // ─── Core Fetcher ─────────────────────────────────────────────────────────────
+ 
+ /**
+@@ -247,6 +318,12 @@ export async function fetchOpencodeQuota(
+   if (cached) {
+     // 404 sentinel — use longer TTL to avoid hammering a non-existent endpoint
+     if (cached.noEndpoint && Date.now() - cached.fetchedAt < NO_ENDPOINT_TTL_MS) {
++      // Before giving up on the 404 sentinel, try the domain quota cache —
++      // the background refresh ticker (60s) already scrapes the dashboard with
++      // the connection's cookies, so real windows are available even though
++      // the public quota API does not exist.
++      const fromDomain = await tryDomainQuotaCache(connectionId);
++      if (fromDomain) return fromDomain;
+       return null;
+     }
+     if (cached.quota !== null && Date.now() - cached.fetchedAt < CACHE_TTL_MS) {
+@@ -254,6 +331,13 @@ export async function fetchOpencodeQuota(
+     }
+   }
+ 
++  // Prefer the domain quota cache (populated by getUsageForProvider via the
++  // dashboard cookie scraper on the 60s background tick) over the API-key
++  // endpoint, which returns 404 upstream. Keeps routing decisions on the same
++  // data the dashboard shows, without duplicating the scraper.
++  const fromDomain = await tryDomainQuotaCache(connectionId);
++  if (fromDomain) return fromDomain;
++
+   // Extract API key from connection
+   const apiKey =
+     typeof connection?.apiKey === "string" && connection.apiKey.trim().length > 0

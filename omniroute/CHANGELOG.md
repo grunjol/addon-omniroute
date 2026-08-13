@@ -1,5 +1,10 @@
 # Changelog
 
+## 3.8.49.4
+
+- opencode-go quota: read from the domain cache (dashboard cookie scraper) instead of the broken public endpoint
+- reset-aware scoring: add monthly window with re-normalized weights
+
 ## 3.8.49.3
 
 - Run as root (fix `/app/data` permission error with HA addon_config mount)
