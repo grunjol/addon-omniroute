@@ -1,5 +1,9 @@
 # Changelog
 
+## 3.8.49.5
+
+- Fix quota cache refresh dropping apikey connections (opencode-go) every 60s — the root cause that left opencode-go quota empty and routing falling back to the dead public endpoint
+
 ## 3.8.49.4
 
 - opencode-go quota: read from the domain cache (dashboard cookie scraper) instead of the broken public endpoint

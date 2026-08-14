@@ -1,0 +1,33 @@
+diff --git a/src/domain/quotaCache.ts b/src/domain/quotaCache.ts
+index 6371cde..452eb61 100644
+--- a/src/domain/quotaCache.ts
++++ b/src/domain/quotaCache.ts
+@@ -17,6 +17,7 @@ import { getUsageForProvider } from "@omniroute/open-sse/services/usage.ts";
+ import { getCachedProviderConnectionById, resolveProxyForConnection } from "@/lib/localDb";
+ import { runWithProxyContext } from "@omniroute/open-sse/utils/proxyFetch.ts";
+ import { safePercentage } from "@/shared/utils/formatting";
++import { USAGE_SUPPORTED_PROVIDERS } from "@/shared/constants/providers";
+ import {
+   saveQuotaSnapshot,
+   cleanupOldSnapshots,
+@@ -540,7 +541,19 @@ async function refreshEntry(entry: QuotaCacheEntry) {
+ 
+   try {
+     const connection = await getCachedProviderConnectionById(entry.connectionId);
+-    if (!connection || connection.authType !== "oauth" || !connection.isActive) {
++    if (!connection || !connection.isActive) {
++      cache.delete(entry.connectionId);
++      return;
++    }
++
++    // Gate: only refresh connections we can actually get usage for. OAuth
++    // connections always qualify; non-OAuth (apikey/cookie) connections only
++    // when the provider has a usage fetcher (e.g. opencode-go scrapes the
++    // dashboard with cookies — authType is "apikey" but getUsageForProvider
++    // resolves real windows). Without this gate, every 60s tick would delete
++    // apikey entries from the cache, so quota-aware routing would never see
++    // their data and fall back to the dead public endpoint (404).
++    if (connection.authType !== "oauth" && !USAGE_SUPPORTED_PROVIDERS.includes(entry.provider)) {
+       cache.delete(entry.connectionId);
+       return;
+     }

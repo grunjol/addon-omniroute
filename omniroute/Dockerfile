@@ -14,6 +14,7 @@ RUN git clone --depth 1 --branch ${OMNROUTE_VERSION} \
 COPY 01-opencode-quota-cache.patch /patches/01-opencode-quota-cache.patch
 COPY 02-pr-9353.patch /patches/02-pr-9353.patch
 COPY 03-reset-aware-monthly.patch /patches/03-reset-aware-monthly.patch
+COPY 04-quota-refresh-apikey.patch /patches/04-quota-refresh-apikey.patch
 RUN cd /src && for p in /patches/*.patch; do patch -p1 < "$p"; done
 
 # ── Stage 2: base (replica of the official Dockerfile's `base` stage) ──────
