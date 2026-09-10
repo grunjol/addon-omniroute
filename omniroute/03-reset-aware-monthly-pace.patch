@@ -1,0 +1,165 @@
+diff --git a/open-sse/services/combo/quotaScoring.ts b/open-sse/services/combo/quotaScoring.ts
+index bf54920..f37a628 100644
+--- a/open-sse/services/combo/quotaScoring.ts
++++ b/open-sse/services/combo/quotaScoring.ts
+@@ -25,6 +25,26 @@ const RESET_AWARE_WEEKLY_REMAINING_WEIGHT = 0.25;
+ const RESET_AWARE_WEEKLY_RESET_PRESSURE_WEIGHT = 0.75;
+ const RESET_AWARE_MONTHLY_REMAINING_WEIGHT = 0.15;
+ const RESET_AWARE_MONTHLY_RESET_PRESSURE_WEIGHT = 0.85;
++/**
++ * Monthly window scoring mode (per combo: config.resetAwareMonthlyMode).
++ *   "pressure" (legacy default): remaining quota PLUS reset pressure
++ *     (urgency × used). Prefers the account whose reset is closest, so it keeps
++ *     draining that account until it is empty — even when the other account
++ *     still holds more quota per day of runway.
++ *   "pace": depletion pace — remaining quota per unit of window time left. The
++ *     account with the highest pace is consumed first, which keeps every
++ *     account on a level track (each one reaches zero at its own reset, no
++ *     quota is wasted).
++ */
++const RESET_AWARE_MONTHLY_MODES = ["pressure", "pace"] as const;
++type ResetAwareMonthlyMode = (typeof RESET_AWARE_MONTHLY_MODES)[number];
++const RESET_AWARE_MONTHLY_DEFAULT_MODE: ResetAwareMonthlyMode = "pressure";
++/**
++ * Floor for the fraction of window time left when scoring the depletion pace:
++ * a reset that is already due (or a few seconds away) must never produce
++ * Infinity, and an account about to refill is legitimately the most attractive.
++ */
++const RESET_AWARE_PACE_MIN_WINDOW_FRACTION = 0.02;
+ const RESET_AWARE_DEFAULTS = {
+   sessionWeight: 0.25,
+   weeklyWeight: 0.45,
+@@ -64,6 +84,12 @@ function getDurationConfig(value: unknown, fallback: number, max: number): numbe
+   return Math.min(max, Math.floor(numericValue));
+ }
+ 
++function resolveResetAwareMonthlyMode(value: unknown): ResetAwareMonthlyMode {
++  return (RESET_AWARE_MONTHLY_MODES as readonly string[]).includes(String(value))
++    ? (String(value) as ResetAwareMonthlyMode)
++    : RESET_AWARE_MONTHLY_DEFAULT_MODE;
++}
++
+ export function resolveResetAwareConfig(config: Record<string, unknown> | null | undefined) {
+   const sessionWeight = getWeightConfig(
+     config?.resetAwareSessionWeight,
+@@ -87,6 +113,7 @@ export function resolveResetAwareConfig(config: Record<string, unknown> | null |
+     sessionWeight: normalizedSessionWeight,
+     weeklyWeight: normalizedWeeklyWeight,
+     monthlyWeight: 1 - normalizedSessionWeight - normalizedWeeklyWeight,
++    monthlyMode: resolveResetAwareMonthlyMode(config?.resetAwareMonthlyMode),
+     tieBand:
+       getPercentConfig(config?.resetAwareTieBandPercent, RESET_AWARE_DEFAULTS.tieBandPercent) / 100,
+     exhaustionGuard:
+@@ -324,6 +351,46 @@ function scoreQuotaWindow(
+   return remainingWeight * normalizedRemaining + resetPressureWeight * resetPressure;
+ }
+ 
++/**
++ * Fraction of the window still to elapse before its reset (0..1). `0.5` when the
++ * snapshot exposes no parseable reset — the same neutral value `getResetUrgency`
++ * falls back to, so a window without a reset date keeps a usable pace score.
++ */
++function getRemainingWindowFraction(
++  resetAt: string | null | undefined,
++  windowMs: number
++): number {
++  if (!resetAt) return 0.5;
++  const resetTime = parseResetTimeMs(resetAt);
++  if (!Number.isFinite(resetTime)) return 0.5;
++  const msUntilReset = resetTime - Date.now();
++  if (msUntilReset <= 0) return RESET_AWARE_PACE_MIN_WINDOW_FRACTION;
++  return Math.max(RESET_AWARE_PACE_MIN_WINDOW_FRACTION, clamp01(msUntilReset / windowMs));
++}
++
++/**
++ * Depletion-pace score: quota still available per unit of window time left
++ * (`remaining / fraction-until-reset`), squashed into [0,1) with `x / (1 + x)`
++ * so the combo's tieBand — an absolute delta on the 0..1 score scale — keeps its
++ * meaning.
++ *
++ * Highest pace wins: an account with 58% left and 15 days of runway (3.9 %/day)
++ * is consumed before one with 20% left and 10 days (2 %/day). Consuming the
++ * highest pace first keeps every account on a level depletion track — each one
++ * reaches zero at its own reset, so no quota expires unused, and it removes the
++ * self-reinforcing "the emptier account wins" loop of the pressure metric.
++ */
++function scoreDepletionPace(
++  remaining: number,
++  resetAt: string | null | undefined,
++  windowMs: number
++): number {
++  const normalizedRemaining = clamp01(remaining);
++  const remainingFraction = getRemainingWindowFraction(resetAt, windowMs);
++  const pace = normalizedRemaining / remainingFraction;
++  return pace / (1 + pace);
++}
++
+ export function scoreResetAwareQuota(
+   quota: unknown,
+   config: ReturnType<typeof resolveResetAwareConfig>
+@@ -344,6 +411,7 @@ export function scoreResetAwareQuota(
+       windowMs: RESET_AWARE_SESSION_WINDOW_MS,
+       remainingWeight: RESET_AWARE_SESSION_REMAINING_WEIGHT,
+       resetPressureWeight: RESET_AWARE_SESSION_RESET_PRESSURE_WEIGHT,
++      useDepletionPace: false,
+     },
+     {
+       key: "weekly",
+@@ -352,6 +420,7 @@ export function scoreResetAwareQuota(
+       windowMs: RESET_AWARE_WEEKLY_WINDOW_MS,
+       remainingWeight: RESET_AWARE_WEEKLY_REMAINING_WEIGHT,
+       resetPressureWeight: RESET_AWARE_WEEKLY_RESET_PRESSURE_WEIGHT,
++      useDepletionPace: false,
+     },
+     {
+       key: "monthly",
+@@ -360,6 +429,10 @@ export function scoreResetAwareQuota(
+       windowMs: RESET_AWARE_MONTHLY_WINDOW_MS,
+       remainingWeight: RESET_AWARE_MONTHLY_REMAINING_WEIGHT,
+       resetPressureWeight: RESET_AWARE_MONTHLY_RESET_PRESSURE_WEIGHT,
++      // The monthly window is the only one whose reset date differs per account,
++      // so it is the one where "consume the highest pace first" replaces "drain
++      // the account that resets first" (config.resetAwareMonthlyMode).
++      useDepletionPace: config.monthlyMode === "pace",
+     },
+   ].filter((w) => w.window?.percentUsed != null && w.weight > 0);
+ 
+@@ -369,13 +442,16 @@ export function scoreResetAwareQuota(
+   let score = 0;
+   for (const w of windows) {
+     const remaining = clamp01(1 - (w.window?.percentUsed ?? 0.5));
+-    const windowScore = scoreQuotaWindow(
+-      remaining,
+-      w.window?.resetAt ?? normalizeResetAt(quota.resetAt),
+-      w.windowMs,
+-      w.remainingWeight,
+-      w.resetPressureWeight
+-    );
++    const resetAt = w.window?.resetAt ?? normalizeResetAt(quota.resetAt);
++    const windowScore = w.useDepletionPace
++      ? scoreDepletionPace(remaining, resetAt, w.windowMs)
++      : scoreQuotaWindow(
++          remaining,
++          resetAt,
++          w.windowMs,
++          w.remainingWeight,
++          w.resetPressureWeight
++        );
+     score += (w.weight / totalWeight) * windowScore;
+   }
+ 
+diff --git a/src/shared/validation/schemas/combo.ts b/src/shared/validation/schemas/combo.ts
+index 1eda0cb..7fc6d24 100644
+--- a/src/shared/validation/schemas/combo.ts
++++ b/src/shared/validation/schemas/combo.ts
+@@ -216,6 +216,10 @@ export const comboRuntimeConfigSchema = z
+     resetAwareSessionWeight: z.coerce.number().min(0).max(100).optional(),
+     resetAwareWeeklyWeight: z.coerce.number().min(0).max(100).optional(),
+     resetAwareMonthlyWeight: z.coerce.number().min(0).max(100).optional(),
++    // How the monthly window is scored: "pressure" (legacy, favors the account
++    // whose reset is closest) or "pace" (favors the account with the most quota
++    // per day of runway left, so all accounts deplete evenly).
++    resetAwareMonthlyMode: z.enum(["pressure", "pace"]).optional(),
+     resetAwareTieBandPercent: z.coerce.number().min(0).max(100).optional(),
+     resetAwareExhaustionGuardPercent: z.coerce.number().min(0).max(100).optional(),
+     resetAwareQuotaCacheTtlMs: z.coerce.number().int().min(0).max(300_000).optional(),

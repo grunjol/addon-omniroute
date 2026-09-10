@@ -18,6 +18,11 @@ RUN git clone --depth 1 --branch ${OMNROUTE_VERSION} \
 # from upstream as of v3.8.51. Re-check with `patch --dry-run` after each bump.
 COPY 01-reset-aware-monthly.patch /patches/01-reset-aware-monthly.patch
 COPY 02-quota-refresh-apikey.patch /patches/02-quota-refresh-apikey.patch
+# 03 builds on 01 (same file) and must be applied after it: adds the optional
+# per-combo "pace" scoring for the monthly window (config.resetAwareMonthlyMode).
+# Default stays "pressure", so existing combos keep their behavior until the
+# mode is set explicitly on a combo.
+COPY 03-reset-aware-monthly-pace.patch /patches/03-reset-aware-monthly-pace.patch
 RUN cd /src && for p in /patches/*.patch; do patch -p1 < "$p"; done
 
 # ── Stage 2: base (replica of the official Dockerfile's `base` stage) ──────
