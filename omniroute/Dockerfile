@@ -98,9 +98,12 @@ ENV OMNIROUTE_BASE_PATH=$OMNIROUTE_BASE_PATH
 # Docker containers cannot run the MITM/Agent-Bridge stack; keep the graceful stub.
 ENV OMNIROUTE_MITM_STUB=1
 
-# Raise the V8 heap ceiling for the build. The webpack production pass peaks
-# ~3.9 GB (brushes a 4 GB ceiling); upstream uses 6144 on 16 GB runners.
-ARG OMNIROUTE_BUILD_MEMORY_MB=6144
+# Raise the V8 heap ceiling for the build. The webpack production pass on a
+# codebase this size needs well over 6 GB; upstream's own CI builds with
+# OMNIROUTE_BUILD_MEMORY_MB=12288 on the same 16 GB GitHub runners. The bare
+# Dockerfile default upstream is 6144 (for ad-hoc/one-click hosts) which OOMs
+# the V8 heap here, so we default to the CI value.
+ARG OMNIROUTE_BUILD_MEMORY_MB=12288
 ENV NODE_OPTIONS="--max-old-space-size=${OMNIROUTE_BUILD_MEMORY_MB}"
 
 # Cap the Next.js page-data worker pool. Next 16 derives the worker count from
