@@ -30,6 +30,11 @@ COPY 03-reset-aware-monthly-pace.patch /patches/03-reset-aware-monthly-pace.patc
 # command-code credits->monthly and five_hour->5h, plus opencode's mcp_monthly
 # as a monthly alias (so the account-level paths see the monthly window too).
 COPY 04-provider-quota-window-aliases.patch /patches/04-provider-quota-window-aliases.patch
+# 05 gives command-code's slow enrichments (/alpha/billing/subscriptions and the
+# default usage summary, both ~16s) a 30s timeout and in-process caching, so the
+# credits row stops collapsing to `used: 0` / `total === remaining` and keeps the
+# real plan/period/spend.
+COPY 05-command-code-slow-enrichments.patch /patches/05-command-code-slow-enrichments.patch
 RUN cd /src && for p in /patches/*.patch; do patch -p1 < "$p"; done
 
 # ── Stage 2: base (replica of the official Dockerfile's `base` stage) ──────

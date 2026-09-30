@@ -1,0 +1,147 @@
+diff --git a/open-sse/services/usage/command-code.ts b/open-sse/services/usage/command-code.ts
+index 4ad7e199..47f7bf7d 100644
+--- a/open-sse/services/usage/command-code.ts
++++ b/open-sse/services/usage/command-code.ts
+@@ -18,9 +18,28 @@ import { createQuotaFromUsage, parseResetTime, type UsageQuota } from "./quota.t
+ const COMMAND_CODE_API_BASE =
+   process.env.COMMANDCODE_API_URL?.trim() || "https://api.commandcode.ai";
+ const FETCH_TIMEOUT_MS = 10_000;
++// `/alpha/billing/subscriptions` and the default (no-`since`) usage summary
++// take ~16s upstream on larger accounts. At the default timeout both soft-fail:
++// the plan/period stay empty and the credits row collapses to the remaining
++// pools (`used: 0`, `total === remaining`). Give the slow calls their own
++// budget and remember their results between the per-minute limit refreshes.
++const SLOW_FETCH_TIMEOUT_MS = 30_000;
++const ORG_CACHE_TTL_MS = 6 * 60 * 60 * 1000;
++const SUBSCRIPTION_CACHE_TTL_MS = 15 * 60 * 1000;
+ 
+ type JsonRecord = Record<string, unknown>;
+ 
++type SubscriptionInfo = {
++  planId?: string;
++  periodStart?: string;
++  periodEnd: string | null;
++};
++
++// Module-level caches: the add-on refreshes provider limits every minute per
++// connection, and these two upstream calls are the slow ones.
++const orgIdCache = new Map<string, { at: number; orgId: string | null }>();
++const subscriptionCache = new Map<string, { at: number; info: SubscriptionInfo }>();
++
+ const PLAN_LABELS: Record<string, string> = {
+   "individual-goat": "Command Code · GOAT",
+   "individual-go": "Command Code · Go",
+@@ -59,10 +78,11 @@ function orgQuery(orgId: string | null | undefined): string {
+ 
+ async function fetchJson(
+   path: string,
+-  apiKey: string
++  apiKey: string,
++  timeoutMs: number = FETCH_TIMEOUT_MS
+ ): Promise<{ ok: boolean; status: number; body: JsonRecord | null }> {
+   const controller = new AbortController();
+-  const timer = setTimeout(() => controller.abort(), FETCH_TIMEOUT_MS);
++  const timer = setTimeout(() => controller.abort(), timeoutMs);
+   try {
+     const response = await fetch(`${COMMAND_CODE_API_BASE}${path}`, {
+       method: "GET",
+@@ -114,21 +134,27 @@ export async function getCommandCodeUsage(apiKey: string) {
+ 
+   try {
+     let orgId: string | null = null;
+-    try {
+-      const whoami = await fetchJson("/alpha/whoami", apiKey);
+-      if (whoami.status === 401 || whoami.status === 403) {
+-        return {
+-          message:
+-            "Command Code connected. The API key was rejected — reconnect or rotate the key.",
+-        };
+-      }
+-      if (whoami.ok && whoami.body) {
+-        const org = toRecord(whoami.body.org);
+-        const id = typeof org.id === "string" && org.id.trim() ? org.id.trim() : null;
+-        orgId = id;
++    const cachedOrg = orgIdCache.get(apiKey);
++    if (cachedOrg && Date.now() - cachedOrg.at < ORG_CACHE_TTL_MS) {
++      orgId = cachedOrg.orgId;
++    } else {
++      try {
++        const whoami = await fetchJson("/alpha/whoami", apiKey, SLOW_FETCH_TIMEOUT_MS);
++        if (whoami.status === 401 || whoami.status === 403) {
++          return {
++            message:
++              "Command Code connected. The API key was rejected — reconnect or rotate the key.",
++          };
++        }
++        if (whoami.ok && whoami.body) {
++          const org = toRecord(whoami.body.org);
++          const id = typeof org.id === "string" && org.id.trim() ? org.id.trim() : null;
++          orgId = id;
++        }
++        orgIdCache.set(apiKey, { at: Date.now(), orgId });
++      } catch {
++        // whoami is optional — continue without orgId
+       }
+-    } catch {
+-      // whoami is optional — continue without orgId
+     }
+ 
+     const q = orgQuery(orgId);
+@@ -153,27 +179,44 @@ export async function getCommandCodeUsage(apiKey: string) {
+     let periodStart: string | undefined;
+     let periodEnd: string | null = null;
+ 
+-    try {
+-      const subRes = await fetchJson(`/alpha/billing/subscriptions${q}`, apiKey);
+-      if (subRes.ok && subRes.body) {
+-        const data = toRecord(subRes.body.data);
+-        if (typeof data.planId === "string" && data.planId.trim()) {
+-          planId = data.planId.trim();
+-        }
+-        if (typeof data.currentPeriodStart === "string") {
+-          periodStart = data.currentPeriodStart;
++    const cachedSub = subscriptionCache.get(apiKey);
++    if (cachedSub && Date.now() - cachedSub.at < SUBSCRIPTION_CACHE_TTL_MS) {
++      ({ planId, periodStart, periodEnd } = cachedSub.info);
++    } else {
++      try {
++        const subRes = await fetchJson(
++          `/alpha/billing/subscriptions${q}`,
++          apiKey,
++          SLOW_FETCH_TIMEOUT_MS
++        );
++        if (subRes.ok && subRes.body) {
++          const data = toRecord(subRes.body.data);
++          if (typeof data.planId === "string" && data.planId.trim()) {
++            planId = data.planId.trim();
++          }
++          if (typeof data.currentPeriodStart === "string") {
++            periodStart = data.currentPeriodStart;
++          }
++          periodEnd = parseResetTime(data.currentPeriodEnd);
++          subscriptionCache.set(apiKey, {
++            at: Date.now(),
++            info: { planId, periodStart, periodEnd },
++          });
+         }
+-        periodEnd = parseResetTime(data.currentPeriodEnd);
++      } catch {
++        // subscription enrichment is soft-fail
+       }
+-    } catch {
+-      // subscription enrichment is soft-fail
+     }
+ 
+     let periodUsed = 0;
+     try {
+       const sinceQ =
+         periodStart != null ? `${q ? `${q}&` : "?"}since=${encodeURIComponent(periodStart)}` : q;
+-      const summaryRes = await fetchJson(`/alpha/usage/summary${sinceQ}`, apiKey);
++      const summaryRes = await fetchJson(
++        `/alpha/usage/summary${sinceQ}`,
++        apiKey,
++        SLOW_FETCH_TIMEOUT_MS
++      );
+       if (summaryRes.ok && summaryRes.body) {
+         const cost = toNumber(summaryRes.body.totalCost, Number.NaN);
+         if (Number.isFinite(cost) && cost >= 0) {
