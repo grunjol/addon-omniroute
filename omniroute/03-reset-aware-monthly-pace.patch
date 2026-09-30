@@ -1,5 +1,5 @@
 diff --git a/open-sse/services/combo/quotaScoring.ts b/open-sse/services/combo/quotaScoring.ts
-index bf54920..f37a628 100644
+index 85dfe630..a8e0240f 100644
 --- a/open-sse/services/combo/quotaScoring.ts
 +++ b/open-sse/services/combo/quotaScoring.ts
 @@ -25,6 +25,26 @@ const RESET_AWARE_WEEKLY_REMAINING_WEIGHT = 0.25;
@@ -50,7 +50,7 @@ index bf54920..f37a628 100644
      tieBand:
        getPercentConfig(config?.resetAwareTieBandPercent, RESET_AWARE_DEFAULTS.tieBandPercent) / 100,
      exhaustionGuard:
-@@ -324,6 +351,46 @@ function scoreQuotaWindow(
+@@ -330,6 +357,43 @@ function scoreQuotaWindow(
    return remainingWeight * normalizedRemaining + resetPressureWeight * resetPressure;
  }
  
@@ -59,10 +59,7 @@ index bf54920..f37a628 100644
 + * snapshot exposes no parseable reset — the same neutral value `getResetUrgency`
 + * falls back to, so a window without a reset date keeps a usable pace score.
 + */
-+function getRemainingWindowFraction(
-+  resetAt: string | null | undefined,
-+  windowMs: number
-+): number {
++function getRemainingWindowFraction(resetAt: string | null | undefined, windowMs: number): number {
 +  if (!resetAt) return 0.5;
 +  const resetTime = parseResetTimeMs(resetAt);
 +  if (!Number.isFinite(resetTime)) return 0.5;
@@ -94,10 +91,10 @@ index bf54920..f37a628 100644
 +  return pace / (1 + pace);
 +}
 +
- export function scoreResetAwareQuota(
-   quota: unknown,
-   config: ReturnType<typeof resolveResetAwareConfig>
-@@ -344,6 +411,7 @@ export function scoreResetAwareQuota(
+ /**
+  * Fraction of each window still available, 0-1, with the same fallbacks the
+  * score uses: a missing window reads the snapshot-wide percentUsed, and a
+@@ -371,6 +435,7 @@ export function scoreResetAwareQuota(
        windowMs: RESET_AWARE_SESSION_WINDOW_MS,
        remainingWeight: RESET_AWARE_SESSION_REMAINING_WEIGHT,
        resetPressureWeight: RESET_AWARE_SESSION_RESET_PRESSURE_WEIGHT,
@@ -105,7 +102,7 @@ index bf54920..f37a628 100644
      },
      {
        key: "weekly",
-@@ -352,6 +420,7 @@ export function scoreResetAwareQuota(
+@@ -379,6 +444,7 @@ export function scoreResetAwareQuota(
        windowMs: RESET_AWARE_WEEKLY_WINDOW_MS,
        remainingWeight: RESET_AWARE_WEEKLY_REMAINING_WEIGHT,
        resetPressureWeight: RESET_AWARE_WEEKLY_RESET_PRESSURE_WEIGHT,
@@ -113,7 +110,7 @@ index bf54920..f37a628 100644
      },
      {
        key: "monthly",
-@@ -360,6 +429,10 @@ export function scoreResetAwareQuota(
+@@ -387,6 +453,10 @@ export function scoreResetAwareQuota(
        windowMs: RESET_AWARE_MONTHLY_WINDOW_MS,
        remainingWeight: RESET_AWARE_MONTHLY_REMAINING_WEIGHT,
        resetPressureWeight: RESET_AWARE_MONTHLY_RESET_PRESSURE_WEIGHT,
@@ -124,7 +121,7 @@ index bf54920..f37a628 100644
      },
    ].filter((w) => w.window?.percentUsed != null && w.weight > 0);
  
-@@ -369,13 +442,16 @@ export function scoreResetAwareQuota(
+@@ -396,13 +466,16 @@ export function scoreResetAwareQuota(
    let score = 0;
    for (const w of windows) {
      const remaining = clamp01(1 - (w.window?.percentUsed ?? 0.5));
@@ -149,10 +146,10 @@ index bf54920..f37a628 100644
    }
  
 diff --git a/src/shared/validation/schemas/combo.ts b/src/shared/validation/schemas/combo.ts
-index 1eda0cb..7fc6d24 100644
+index 581f5ec9..a5baba83 100644
 --- a/src/shared/validation/schemas/combo.ts
 +++ b/src/shared/validation/schemas/combo.ts
-@@ -216,6 +216,10 @@ export const comboRuntimeConfigSchema = z
+@@ -236,6 +236,10 @@ export const comboRuntimeConfigSchema = z
      resetAwareSessionWeight: z.coerce.number().min(0).max(100).optional(),
      resetAwareWeeklyWeight: z.coerce.number().min(0).max(100).optional(),
      resetAwareMonthlyWeight: z.coerce.number().min(0).max(100).optional(),
@@ -162,4 +159,4 @@ index 1eda0cb..7fc6d24 100644
 +    resetAwareMonthlyMode: z.enum(["pressure", "pace"]).optional(),
      resetAwareTieBandPercent: z.coerce.number().min(0).max(100).optional(),
      resetAwareExhaustionGuardPercent: z.coerce.number().min(0).max(100).optional(),
-     resetAwareQuotaCacheTtlMs: z.coerce.number().int().min(0).max(300_000).optional(),
+     quotaWeightedFloorPercent: z.coerce.number().min(0).max(100).optional(),

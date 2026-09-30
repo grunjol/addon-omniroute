@@ -1,0 +1,28 @@
+diff --git a/open-sse/services/genericQuotaFetcher.ts b/open-sse/services/genericQuotaFetcher.ts
+index 7137867f..beb71ff7 100644
+--- a/open-sse/services/genericQuotaFetcher.ts
++++ b/open-sse/services/genericQuotaFetcher.ts
+@@ -344,6 +344,23 @@ function normalizeQuotaWindows(
+     normalized.window7d = sevenDayWindow;
+   }
+ 
++  // Command Code (commandcode.ai) reports its monthly credit pool as `credits`
++  // and its rolling session as `five_hour`, neither of which matches the
++  // canonical keys above. Map them to the structural windows the scorers read
++  // (windowMonthly / window5h) so reset-aware, reset-window, expiry-first and
++  // quota preflight all see them. Done before the model-window fallback below
++  // so `five_hour` is not mistaken for a per-model window.
++  if (context.provider === "command-code") {
++    const commandCredits = windows.credits;
++    if (commandCredits && !normalized.windowMonthly) {
++      normalized.windowMonthly = commandCredits;
++    }
++    const commandFiveHour = windows.five_hour;
++    if (commandFiveHour && !normalized.window5h) {
++      normalized.window5h = commandFiveHour;
++    }
++  }
++
+   // Antigravity-style per-model windows: pick worst only inside requested family.
+   const modelWindows = Object.entries(windows).filter(
+     ([key]) =>

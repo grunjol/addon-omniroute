@@ -1,29 +1,29 @@
 diff --git a/src/domain/quotaCache.ts b/src/domain/quotaCache.ts
-index 6371cde..e436ca3 100644
+index 4fdb474d..fd5cbbdf 100644
 --- a/src/domain/quotaCache.ts
 +++ b/src/domain/quotaCache.ts
-@@ -17,6 +17,7 @@ import { getUsageForProvider } from "@omniroute/open-sse/services/usage.ts";
- import { getCachedProviderConnectionById, resolveProxyForConnection } from "@/lib/localDb";
+@@ -21,6 +21,7 @@ import { getCachedProviderConnectionById } from "@/lib/db/readCache";
+ import { resolveProxyForConnection } from "@/lib/db/settings";
  import { runWithProxyContext } from "@omniroute/open-sse/utils/proxyFetch.ts";
  import { safePercentage } from "@/shared/utils/formatting";
 +import { USAGE_SUPPORTED_PROVIDERS } from "@/shared/constants/providers";
  import {
    saveQuotaSnapshot,
    cleanupOldSnapshots,
-@@ -385,7 +386,11 @@ export function setQuotaCache(
+@@ -730,7 +731,11 @@ export function setQuotaCache(
   * Get cached quota entry (returns null if not cached).
   */
  export function getQuotaCache(connectionId: string): QuotaCacheEntry | null {
 -  return getState().cache.get(connectionId) || null;
 +  // Read in-memory first; fall back to the persisted SQLite snapshots so
-+  // quota-aware routing sees real scraper data even before the first
++  // quota-aware routing sees real provider data even before the first
 +  // ProviderLimitsSync / UI write populates the in-memory cache (mirrors
 +  // getQuotaWindowStatus which already hydrates from snapshots).
 +  return getState().cache.get(connectionId) || hydrateQuotaCacheFromSnapshots(connectionId);
  }
  
  function hydrateQuotaCacheFromSnapshots(connectionId: string): QuotaCacheEntry | null {
-@@ -540,7 +545,19 @@ async function refreshEntry(entry: QuotaCacheEntry) {
+@@ -978,7 +983,18 @@ async function refreshEntry(entry: QuotaCacheEntry) {
  
    try {
      const connection = await getCachedProviderConnectionById(entry.connectionId);
@@ -35,11 +35,10 @@ index 6371cde..e436ca3 100644
 +
 +    // Gate: only refresh connections we can actually get usage for. OAuth
 +    // connections always qualify; non-OAuth (apikey/cookie) connections only
-+    // when the provider has a usage fetcher (e.g. opencode-go scrapes the
-+    // dashboard with cookies — authType is "apikey" but getUsageForProvider
-+    // resolves real windows). Without this gate, every 60s tick would delete
-+    // apikey entries from the cache, so quota-aware routing would never see
-+    // their data and fall back to the dead public endpoint (404).
++    // when the provider has a usage fetcher (e.g. opencode-go and command-code
++    // are apikey but getUsageForProvider resolves real windows). Without this
++    // gate, every background tick would delete apikey entries from the cache,
++    // so quota-aware routing would never see their data.
 +    if (connection.authType !== "oauth" && !USAGE_SUPPORTED_PROVIDERS.includes(entry.provider)) {
        cache.delete(entry.connectionId);
        return;
