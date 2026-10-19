@@ -5,30 +5,30 @@
 # compiled, so patching .ts files on a built image does nothing.
 FROM alpine/git AS source
 RUN apk add --no-cache patch
-ARG OMNROUTE_VERSION=v3.8.51
-# v3.8.51 tag == c1e30b7676975feb298b49eff6ff58923c04b89e (verified 2026-09-30).
+ARG OMNROUTE_VERSION=v3.8.52
+# v3.8.52 tag == ad6f33f66bda34eba98645d3bdabbde294bc843 (verified 2026-10-19).
 # Tags are immutable; if a rebuild needs the exact same source, this SHA pins it.
 RUN git clone --depth 1 --branch ${OMNROUTE_VERSION} \
     https://github.com/diegosouzapw/OmniRoute.git /src
 # Add future patches here. Numeric prefixes fix the application order (the
 # `for` loop globs /patches/*.patch alphabetically).
-# NOTES as of v3.8.51:
-#  - upstream #11234 (opencodeGo dashboard snapshot bridge) and #9353 are in.
-#  - v3.8.51 replaced the opencode cookie/dashboard scraper with the official
-#    API endpoint (GET /zen/go/v1/usage), so no scraper patch is needed.
-#  - reset-aware is still session+weekly only; quotaCache still drops non-oauth
-#    entries on refresh and getQuotaCache still misses SQLite snapshots.
+# NOTES as of v3.8.52:
+#  - upstream now ships its own reset-aware monthly window (fixed 25% blend,
+#    session 0.35 / weekly 0.65); patch 03 only adds the opt-in pace mode on
+#    top of those weights. `resetAwareMonthlyWeight` is no longer used.
+#  - quotaCache still drops non-oauth entries on refresh and getQuotaCache
+#    still misses SQLite snapshots (patch 02).
+#  - command-code usage now routes through the connection proxy; patch 05 is
+#    rebased onto that signature.
 # Re-check every patch with `patch --dry-run` after each upstream bump.
-COPY 01-reset-aware-monthly.patch /patches/01-reset-aware-monthly.patch
+COPY 01-opencode-monthly-alias.patch /patches/01-opencode-monthly-alias.patch
 COPY 02-quota-refresh-apikey.patch /patches/02-quota-refresh-apikey.patch
-# 03 builds on 01 (same file) and must be applied after it: adds the optional
-# per-combo "pace" scoring for the monthly window (config.resetAwareMonthlyMode).
-# Default stays "pressure", so existing combos keep their behavior until the
-# mode is set explicitly on a combo.
+# 03 adds the optional per-combo "pace" scoring for the monthly window
+# (config.resetAwareMonthlyMode). Upstream's weights and monthly blend stay
+# untouched; default "pressure" keeps upstream behavior.
 COPY 03-reset-aware-monthly-pace.patch /patches/03-reset-aware-monthly-pace.patch
 # 04 maps provider-native quota window names to canonical structural windows:
-# command-code credits->monthly and five_hour->5h, plus opencode's mcp_monthly
-# as a monthly alias (so the account-level paths see the monthly window too).
+# command-code credits->monthly and five_hour->5h.
 COPY 04-provider-quota-window-aliases.patch /patches/04-provider-quota-window-aliases.patch
 # 05 gives command-code's slow enrichments (/alpha/billing/subscriptions and the
 # default usage summary, both ~16s) a 30s timeout and in-process caching, so the

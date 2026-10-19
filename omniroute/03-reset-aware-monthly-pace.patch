@@ -1,11 +1,11 @@
 diff --git a/open-sse/services/combo/quotaScoring.ts b/open-sse/services/combo/quotaScoring.ts
-index 85dfe630..a8e0240f 100644
+index 4a3a4127..01b799b2 100644
 --- a/open-sse/services/combo/quotaScoring.ts
 +++ b/open-sse/services/combo/quotaScoring.ts
-@@ -25,6 +25,26 @@ const RESET_AWARE_WEEKLY_REMAINING_WEIGHT = 0.25;
- const RESET_AWARE_WEEKLY_RESET_PRESSURE_WEIGHT = 0.75;
- const RESET_AWARE_MONTHLY_REMAINING_WEIGHT = 0.15;
- const RESET_AWARE_MONTHLY_RESET_PRESSURE_WEIGHT = 0.85;
+@@ -26,6 +26,26 @@ const RESET_AWARE_WEEKLY_RESET_PRESSURE_WEIGHT = 0.75;
+ const RESET_AWARE_MONTHLY_WEIGHT = 0.25;
+ const RESET_AWARE_MONTHLY_REMAINING_WEIGHT = 0.25;
+ const RESET_AWARE_MONTHLY_RESET_PRESSURE_WEIGHT = 0.75;
 +/**
 + * Monthly window scoring mode (per combo: config.resetAwareMonthlyMode).
 + *   "pressure" (legacy default): remaining quota PLUS reset pressure
@@ -27,8 +27,8 @@ index 85dfe630..a8e0240f 100644
 + */
 +const RESET_AWARE_PACE_MIN_WINDOW_FRACTION = 0.02;
  const RESET_AWARE_DEFAULTS = {
-   sessionWeight: 0.25,
-   weeklyWeight: 0.45,
+   sessionWeight: 0.35,
+   weeklyWeight: 0.65,
 @@ -64,6 +84,12 @@ function getDurationConfig(value: unknown, fallback: number, max: number): numbe
    return Math.min(max, Math.floor(numericValue));
  }
@@ -42,15 +42,15 @@ index 85dfe630..a8e0240f 100644
  export function resolveResetAwareConfig(config: Record<string, unknown> | null | undefined) {
    const sessionWeight = getWeightConfig(
      config?.resetAwareSessionWeight,
-@@ -87,6 +113,7 @@ export function resolveResetAwareConfig(config: Record<string, unknown> | null |
+@@ -80,6 +106,7 @@ export function resolveResetAwareConfig(config: Record<string, unknown> | null |
+   return {
      sessionWeight: normalizedSessionWeight,
-     weeklyWeight: normalizedWeeklyWeight,
-     monthlyWeight: 1 - normalizedSessionWeight - normalizedWeeklyWeight,
+     weeklyWeight: 1 - normalizedSessionWeight,
 +    monthlyMode: resolveResetAwareMonthlyMode(config?.resetAwareMonthlyMode),
      tieBand:
        getPercentConfig(config?.resetAwareTieBandPercent, RESET_AWARE_DEFAULTS.tieBandPercent) / 100,
      exhaustionGuard:
-@@ -330,6 +357,43 @@ function scoreQuotaWindow(
+@@ -317,6 +344,43 @@ function scoreQuotaWindow(
    return remainingWeight * normalizedRemaining + resetPressureWeight * resetPressure;
  }
  
@@ -92,70 +92,52 @@ index 85dfe630..a8e0240f 100644
 +}
 +
  /**
-  * Fraction of each window still available, 0-1, with the same fallbacks the
-  * score uses: a missing window reads the snapshot-wide percentUsed, and a
-@@ -371,6 +435,7 @@ export function scoreResetAwareQuota(
-       windowMs: RESET_AWARE_SESSION_WINDOW_MS,
-       remainingWeight: RESET_AWARE_SESSION_REMAINING_WEIGHT,
-       resetPressureWeight: RESET_AWARE_SESSION_RESET_PRESSURE_WEIGHT,
-+      useDepletionPace: false,
-     },
-     {
-       key: "weekly",
-@@ -379,6 +444,7 @@ export function scoreResetAwareQuota(
-       windowMs: RESET_AWARE_WEEKLY_WINDOW_MS,
-       remainingWeight: RESET_AWARE_WEEKLY_REMAINING_WEIGHT,
-       resetPressureWeight: RESET_AWARE_WEEKLY_RESET_PRESSURE_WEIGHT,
-+      useDepletionPace: false,
-     },
-     {
-       key: "monthly",
-@@ -387,6 +453,10 @@ export function scoreResetAwareQuota(
-       windowMs: RESET_AWARE_MONTHLY_WINDOW_MS,
-       remainingWeight: RESET_AWARE_MONTHLY_REMAINING_WEIGHT,
-       resetPressureWeight: RESET_AWARE_MONTHLY_RESET_PRESSURE_WEIGHT,
-+      // The monthly window is the only one whose reset date differs per account,
-+      // so it is the one where "consume the highest pace first" replaces "drain
-+      // the account that resets first" (config.resetAwareMonthlyMode).
-+      useDepletionPace: config.monthlyMode === "pace",
-     },
-   ].filter((w) => w.window?.percentUsed != null && w.weight > 0);
- 
-@@ -396,13 +466,16 @@ export function scoreResetAwareQuota(
-   let score = 0;
-   for (const w of windows) {
-     const remaining = clamp01(1 - (w.window?.percentUsed ?? 0.5));
--    const windowScore = scoreQuotaWindow(
--      remaining,
--      w.window?.resetAt ?? normalizeResetAt(quota.resetAt),
--      w.windowMs,
--      w.remainingWeight,
--      w.resetPressureWeight
+  * Session and weekly windows use the same fallback as the score when absent.
+  * Monthly quota participates only when its window is present.
+@@ -373,13 +437,25 @@ export function scoreResetAwareQuota(
+   );
+   let score = config.sessionWeight * sessionScore + config.weeklyWeight * weeklyScore;
+   if (monthlyWindow && monthlyRemaining !== null) {
+-    const monthlyScore = scoreQuotaWindow(
+-      monthlyRemaining,
+-      monthlyWindow.resetAt,
+-      RESET_AWARE_MONTHLY_WINDOW_MS,
+-      RESET_AWARE_MONTHLY_REMAINING_WEIGHT,
+-      RESET_AWARE_MONTHLY_RESET_PRESSURE_WEIGHT
 -    );
-+    const resetAt = w.window?.resetAt ?? normalizeResetAt(quota.resetAt);
-+    const windowScore = w.useDepletionPace
-+      ? scoreDepletionPace(remaining, resetAt, w.windowMs)
-+      : scoreQuotaWindow(
-+          remaining,
-+          resetAt,
-+          w.windowMs,
-+          w.remainingWeight,
-+          w.resetPressureWeight
-+        );
-     score += (w.weight / totalWeight) * windowScore;
++    // Upstream's monthly blend and weights stay untouched; the fork only swaps
++    // the monthly window's scoring function when the combo opts into "pace".
++    // The monthly window is the only one whose reset date differs per account,
++    // so it is the one where "consume the highest pace first" replaces "drain
++    // the account that resets first" (config.resetAwareMonthlyMode).
++    const monthlyScore =
++      config.monthlyMode === "pace"
++        ? scoreDepletionPace(
++            monthlyRemaining,
++            monthlyWindow.resetAt,
++            RESET_AWARE_MONTHLY_WINDOW_MS
++          )
++        : scoreQuotaWindow(
++            monthlyRemaining,
++            monthlyWindow.resetAt,
++            RESET_AWARE_MONTHLY_WINDOW_MS,
++            RESET_AWARE_MONTHLY_REMAINING_WEIGHT,
++            RESET_AWARE_MONTHLY_RESET_PRESSURE_WEIGHT
++          );
+     score = (1 - RESET_AWARE_MONTHLY_WEIGHT) * score + RESET_AWARE_MONTHLY_WEIGHT * monthlyScore;
    }
  
 diff --git a/src/shared/validation/schemas/combo.ts b/src/shared/validation/schemas/combo.ts
-index 581f5ec9..a5baba83 100644
+index 116f9ebc..94806af9 100644
 --- a/src/shared/validation/schemas/combo.ts
 +++ b/src/shared/validation/schemas/combo.ts
-@@ -236,6 +236,10 @@ export const comboRuntimeConfigSchema = z
+@@ -246,6 +246,10 @@ export const comboRuntimeConfigSchema = z
+     compositeTiers: compositeTiersSchema.optional(),
      resetAwareSessionWeight: z.coerce.number().min(0).max(100).optional(),
      resetAwareWeeklyWeight: z.coerce.number().min(0).max(100).optional(),
-     resetAwareMonthlyWeight: z.coerce.number().min(0).max(100).optional(),
-+    // How the monthly window is scored: "pressure" (legacy, favors the account
-+    // whose reset is closest) or "pace" (favors the account with the most quota
-+    // per day of runway left, so all accounts deplete evenly).
++    // How the monthly window is scored: "pressure" (upstream default, favors the
++    // account whose reset is closest) or "pace" (favors the account with the most
++    // quota per day of runway left, so all accounts deplete evenly).
 +    resetAwareMonthlyMode: z.enum(["pressure", "pace"]).optional(),
      resetAwareTieBandPercent: z.coerce.number().min(0).max(100).optional(),
      resetAwareExhaustionGuardPercent: z.coerce.number().min(0).max(100).optional(),

@@ -1,16 +1,17 @@
 diff --git a/src/domain/quotaCache.ts b/src/domain/quotaCache.ts
-index 4fdb474d..fd5cbbdf 100644
+index 0d1e5e75..f05a95e2 100644
 --- a/src/domain/quotaCache.ts
 +++ b/src/domain/quotaCache.ts
-@@ -21,6 +21,7 @@ import { getCachedProviderConnectionById } from "@/lib/db/readCache";
- import { resolveProxyForConnection } from "@/lib/db/settings";
- import { runWithProxyContext } from "@omniroute/open-sse/utils/proxyFetch.ts";
- import { safePercentage } from "@/shared/utils/formatting";
-+import { USAGE_SUPPORTED_PROVIDERS } from "@/shared/constants/providers";
+@@ -41,7 +41,7 @@ import {
+ import { selectAntigravityQuotaWindowNames } from "@omniroute/open-sse/services/antigravityQuotaFamily.ts";
+ import { isClaudeExtraUsageAllowed } from "@/lib/providers/claudeExtraUsage";
+ import { isCodexQuotaFilteringDisabled } from "@/lib/providers/codexQuotaFiltering";
+-import { resolveProviderId } from "@/shared/constants/providers";
++import { resolveProviderId, USAGE_SUPPORTED_PROVIDERS } from "@/shared/constants/providers";
  import {
-   saveQuotaSnapshot,
-   cleanupOldSnapshots,
-@@ -730,7 +731,11 @@ export function setQuotaCache(
+   claudeQuotaMatchesModel,
+   isExplicitClaudeQuota429Text,
+@@ -815,7 +815,11 @@ export function setQuotaCache(
   * Get cached quota entry (returns null if not cached).
   */
  export function getQuotaCache(connectionId: string): QuotaCacheEntry | null {
@@ -23,7 +24,7 @@ index 4fdb474d..fd5cbbdf 100644
  }
  
  function hydrateQuotaCacheFromSnapshots(connectionId: string): QuotaCacheEntry | null {
-@@ -978,7 +983,18 @@ async function refreshEntry(entry: QuotaCacheEntry) {
+@@ -1085,7 +1089,18 @@ async function refreshEntry(entry: QuotaCacheEntry) {
  
    try {
      const connection = await getCachedProviderConnectionById(entry.connectionId);

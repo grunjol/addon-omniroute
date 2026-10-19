@@ -1,0 +1,19 @@
+diff --git a/open-sse/services/combo/quotaScoring.ts b/open-sse/services/combo/quotaScoring.ts
+index 4a3a4127..742b4f21 100644
+--- a/open-sse/services/combo/quotaScoring.ts
++++ b/open-sse/services/combo/quotaScoring.ts
+@@ -252,7 +252,13 @@ function getWindowsMapQuotaWindow(
+   windowName: ResetWindowName
+ ): QuotaWindowSnapshot | null {
+   const candidates = getQuotaWindowEntries(quota).filter(
+-    ({ key }) => key === windowName || key.startsWith(`${windowName} `)
++    ({ key }) =>
++      key === windowName ||
++      key.startsWith(`${windowName} `) ||
++      // OpenCode surfaces its monthly window as `mcp_monthly`; treat it as the
++      // canonical monthly window so account-level paths (expiry-first, auth
++      // selection, quota-weighted) score it instead of ignoring it.
++      (windowName === "monthly" && key === "mcp_monthly")
+   );
+ 
+   if (candidates.length === 0) return null;
