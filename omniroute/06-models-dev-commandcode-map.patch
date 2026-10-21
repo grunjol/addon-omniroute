@@ -1,0 +1,70 @@
+diff --git a/src/lib/modelsDevSync/transform.ts b/src/lib/modelsDevSync/transform.ts
+index 0b8410132..3a587d843 100644
+--- a/src/lib/modelsDevSync/transform.ts
++++ b/src/lib/modelsDevSync/transform.ts
+@@ -173,6 +173,11 @@ export const MODELS_DEV_PROVIDER_MAP: Record<string, string[]> = {
+   cline: ["cl", "cline"],
+   cursor: ["cu", "cursor"],
+   github: ["gh", "github"],
++  // commandcode → command-code (id) / cmd (alias). OmniRoute's provider id contains a
++  // hyphen, models.dev's does not, so without this entry the sync writes its pricing and
++  // capabilities under a `commandcode` key no request ever reads: every command-code call
++  // logs $0 in analytics even though models.dev prices the whole catalog.
++  commandcode: ["command-code", "cmd"],
+   // Fallback: if no mapping exists, use the models.dev ID as-is
+ };
+ 
+diff --git a/tests/unit/models-dev-commandcode-map.test.ts b/tests/unit/models-dev-commandcode-map.test.ts
+new file mode 100644
+index 000000000..2752a8452
+--- /dev/null
++++ b/tests/unit/models-dev-commandcode-map.test.ts
+@@ -0,0 +1,48 @@
++/**
++ * models.dev → OmniRoute provider-id mapping for Command Code.
++ *
++ * models.dev keys the provider `commandcode` (no hyphen); OmniRoute's provider id is
++ * `command-code` with `cmd` as its alias. Without an explicit map entry the sync wrote
++ * pricing/capabilities under a `commandcode` key no request ever reads, so every
++ * command-code call was logged as $0 in analytics even though models.dev prices the
++ * whole catalog. DB-free by design — the transform layer is pure.
++ */
++
++import { describe, it } from "node:test";
++import assert from "node:assert/strict";
++
++import {
++  MODELS_DEV_PROVIDER_MAP,
++  mapProviderId,
++  transformModelsDevToPricing,
++} from "../../src/lib/modelsDevSync/transform.ts";
++
++describe("models.dev provider map — commandcode → command-code", () => {
++  it("maps the models.dev id to the OmniRoute id and its alias", () => {
++    assert.deepEqual(MODELS_DEV_PROVIDER_MAP.commandcode, ["command-code", "cmd"]);
++    assert.deepEqual(mapProviderId("commandcode"), ["command-code", "cmd"]);
++  });
++
++  it("writes pricing under the key the router queries, never the unmapped one", () => {
++    const pricing = transformModelsDevToPricing({
++      commandcode: {
++        id: "commandcode",
++        models: {
++          "deepseek/deepseek-v4.1-flash": {
++            id: "deepseek/deepseek-v4.1-flash",
++            name: "DeepSeek V4.1 Flash",
++            cost: { input: 0.15, output: 0.6, cache_read: 0.003 },
++          },
++        },
++      },
++    });
++
++    assert.deepEqual(pricing["command-code"]["deepseek/deepseek-v4.1-flash"], {
++      input: 0.15,
++      output: 0.6,
++      cached: 0.003,
++    });
++    assert.deepEqual(pricing.cmd["deepseek/deepseek-v4.1-flash"], pricing["command-code"]["deepseek/deepseek-v4.1-flash"]);
++    assert.equal(pricing.commandcode, undefined);
++  });
++});

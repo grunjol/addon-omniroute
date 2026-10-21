@@ -35,6 +35,11 @@ COPY 04-provider-quota-window-aliases.patch /patches/04-provider-quota-window-al
 # credits row stops collapsing to `used: 0` / `total === remaining` and keeps the
 # real plan/period/spend.
 COPY 05-command-code-slow-enrichments.patch /patches/05-command-code-slow-enrichments.patch
+# 06 maps models.dev's `commandcode` provider id to OmniRoute's `command-code`/`cmd`
+# so a models.dev pricing sync writes under the key the router actually queries
+# (without it every command-code call logs $0 in analytics even though models.dev
+# prices the whole catalog). Sync stays opt-in; the user pricing table still wins.
+COPY 06-models-dev-commandcode-map.patch /patches/06-models-dev-commandcode-map.patch
 RUN cd /src && for p in /patches/*.patch; do patch -p1 < "$p"; done
 
 # ── Stage 2: base (replica of the official Dockerfile's `base` stage) ──────
